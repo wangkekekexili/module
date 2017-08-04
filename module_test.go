@@ -3,6 +3,8 @@ package module_test
 import (
 	"testing"
 
+	"errors"
+
 	"github.com/wangkekekexili/module"
 )
 
@@ -22,7 +24,10 @@ type logger struct {
 }
 
 func (g *logger) Load() error {
-	g.name = "logger"
+	if g.Config == nil {
+		return errors.New("config module must be loaded")
+	}
+	g.name = g.Config.name + "logger"
 	return nil
 }
 
@@ -60,7 +65,7 @@ func TestModule_load(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	if g.name != "logger" {
+	if g.name != "configlogger" {
 		t.Error("logger is not loaded")
 	}
 	if g.Config.name != "config" {
