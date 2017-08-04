@@ -6,18 +6,32 @@ import (
 	"github.com/wangkekekexili/module"
 )
 
-func TestModule(t *testing.T) {
-	type config struct{}
+type config struct {
+	name string
+}
 
-	type logger struct {
-		Config *config
-	}
+func (c *config) Load() error {
+	c.name = "config"
+	return nil
+}
 
-	type reporter struct {
-		Config *config
-		Logger *logger
-	}
+type logger struct {
+	Config *config
 
+	name string
+}
+
+func (g *logger) Load() error {
+	g.name = "logger"
+	return nil
+}
+
+type reporter struct {
+	Config *config
+	Logger *logger
+}
+
+func TestModule_initialize(t *testing.T) {
 	app := &struct {
 		Config   *config
 		Logger   *logger
@@ -37,5 +51,19 @@ func TestModule(t *testing.T) {
 	// Modules are singletons.
 	if app.Config != app.Logger.Config || app.Config != app.Reporter.Config || app.Config != app.Reporter.Logger.Config {
 		t.Fatal("modules are not initialzied as singletons")
+	}
+}
+
+func TestModule_load(t *testing.T) {
+	g := &logger{}
+	err := module.Load(g)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if g.name != "logger" {
+		t.Error("logger is not loaded")
+	}
+	if g.Config.name != "config" {
+		t.Error("config is not loaded")
 	}
 }

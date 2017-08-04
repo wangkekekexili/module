@@ -6,10 +6,6 @@ import (
 	"reflect"
 )
 
-type loadable interface {
-	Load() error
-}
-
 func Load(m interface{}) error {
 	// m must be a pointer to struct.
 	t := reflect.TypeOf(m)
@@ -24,7 +20,18 @@ func Load(m interface{}) error {
 	v := reflect.ValueOf(m).Elem()
 	visited[t] = v
 
-	err := populate(v, visited)
+	tree := &depTree{}
+	current, ok := m.(loadable)
+	if ok {
+		tree.root = &depNode{m: current}
+	}
+
+	err := populate(v, visited, tree.root)
+	if err != nil {
+		return err
+	}
+
+	err = tree.load()
 	if err != nil {
 		return err
 	}
@@ -32,7 +39,50 @@ func Load(m interface{}) error {
 	return nil
 }
 
-func populate(v reflect.Value, visited map[reflect.Type]reflect.Value) error {
+type loadable interface {
+	Load() error
+}
+
+var loadableType = reflect.TypeOf((*loadable)(nil)).Elem()
+
+type depTree struct {
+	root   *depNode
+	loaded map[reflect.Type]bool
+}
+
+type depNode struct {
+	m    loadable
+	deps []*depNode
+}
+
+func (t *depTree) load() error {
+	if t.root == nil {
+		return nil
+	}
+	t.loaded = make(map[reflect.Type]bool)
+	return t.loadNode(t.root)
+}
+
+func (t *depTree) loadNode(n *depNode) error {
+	// Load dependencies first.
+	for _, n := range n.deps {
+		t.loadNode(n)
+	}
+
+	typ := reflect.TypeOf(n.m)
+	loaded := t.loaded[typ]
+	if loaded {
+		return nil
+	}
+	err := n.m.Load()
+	if err != nil {
+		return err
+	}
+	t.loaded[typ] = true
+	return nil
+}
+
+func populate(v reflect.Value, visited map[reflect.Type]reflect.Value, dep *depNode) error {
 	if v.Kind() != reflect.Struct {
 		return errors.New("only struct can be passed to populate")
 	}
@@ -45,7 +95,7 @@ func populate(v reflect.Value, visited map[reflect.Type]reflect.Value) error {
 
 		switch {
 		case fieldType.Kind() == reflect.Struct:
-			populate(fieldValue, visited)
+			populate(fieldValue, visited, dep)
 		case fieldType.Kind() == reflect.Ptr && fieldType.Elem().Kind() == reflect.Struct:
 			fieldTypeElem := fieldType.Elem()           // From Ptr to Struct.
 			newFieldValue, ok := visited[fieldTypeElem] // Check if it's already initialized. newFieldValue will be of type Struct at this point.
@@ -55,9 +105,15 @@ func populate(v reflect.Value, visited map[reflect.Type]reflect.Value) error {
 				newFieldValue = reflect.New(fieldTypeElem)
 				visited[fieldTypeElem] = newFieldValue.Elem()
 			}
-
 			fieldValue.Set(newFieldValue)
-			populate(newFieldValue.Elem(), visited)
+
+			if dep != nil && fieldType.Implements(loadableType) {
+				newDep := &depNode{m: fieldValue.Interface().(loadable)}
+				dep.deps = append(dep.deps, newDep)
+				dep = newDep
+			}
+
+			populate(newFieldValue.Elem(), visited, dep)
 		}
 	}
 	return nil
