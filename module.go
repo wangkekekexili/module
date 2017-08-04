@@ -10,16 +10,11 @@ type loadable interface {
 	Load() error
 }
 
-var (
-	errExpStruct    = errors.New("only struct can be passed to populate")
-	errExpStructPtr = errors.New("only pointer to struct can be passed to Load")
-)
-
 func Load(m interface{}) error {
 	// m must be a pointer to struct.
 	t := reflect.TypeOf(m)
 	if t.Kind() != reflect.Ptr || t.Elem().Kind() != reflect.Struct {
-		return errExpStructPtr
+		return errors.New("only pointer to struct can be passed to Load")
 	}
 
 	// Initialized values will be saved in visited so that modules are singletons.
@@ -39,7 +34,7 @@ func Load(m interface{}) error {
 
 func populate(v reflect.Value, visited map[reflect.Type]reflect.Value) error {
 	if v.Kind() != reflect.Struct {
-		return errExpStruct
+		return errors.New("only struct can be passed to populate")
 	}
 	for i := 0; i != v.NumField(); i++ {
 		fieldValue := v.Field(i)
