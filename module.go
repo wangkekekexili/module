@@ -66,7 +66,10 @@ func (t *depTree) load() error {
 func (t *depTree) loadNode(n *depNode) error {
 	// Load dependencies first.
 	for _, n := range n.deps {
-		t.loadNode(n)
+		err := t.loadNode(n)
+		if err != nil {
+			return err
+		}
 	}
 
 	typ := reflect.TypeOf(n.m)
