@@ -6,32 +6,21 @@ import (
 	"reflect"
 )
 
+// Load recursively initializes a module.
+// A module is defined as a pointer to a struct implementing loadable.
+// It recursively checks structs or pointers to structs and any module will be initialized
+// and Load() will be called.
+// Modules are singletons.
 func Load(m interface{}) error {
-	// m must be a pointer to struct.
+	// m must be a pointer to struct and implements loadable.
 	t := reflect.TypeOf(m)
 	if t.Kind() != reflect.Ptr || t.Elem().Kind() != reflect.Struct {
-		return errors.New("only pointer to struct can be passed to Load")
+		return errors.New("expecting pointer to a struct")
 	}
 
-	// Initialized values will be saved in visited so that modules are singletons.
-	// Key is the type of the module, of kind struct.
-	// Value is the initialized value of the module, of kind struct.
-	visited := make(map[reflect.Type]reflect.Value)
-	v := reflect.ValueOf(m).Elem()
-	visited[t] = v
-
-	tree := &depTree{}
-	current, ok := m.(loadable)
-	if ok {
-		tree.root = &depNode{m: current}
-	}
-
-	err := populate(v, visited, tree.root)
-	if err != nil {
-		return err
-	}
-
-	err = tree.load()
+	g := newGraph(reflect.ValueOf(m))
+	g.init()
+	err := g.load()
 	if err != nil {
 		return err
 	}
@@ -45,50 +34,46 @@ type loadable interface {
 
 var loadableType = reflect.TypeOf(new(loadable)).Elem()
 
-type depTree struct {
-	root   *depNode
+type node struct {
+	m    reflect.Value // Either Struct or Ptr to Struct.
+	deps []*node
+}
+
+type graph struct {
+	root *node
+
+	// initialized saves initialized module values.
+	// Key is the type of the module, of kind struct.
+	// Value is the initialized value of the module, of kind struct.
+	initialized map[reflect.Type]reflect.Value
+
+	// loaded saves a set of loaded modules.
+	// Key is the type of the module, of kind struct.
 	loaded map[reflect.Type]bool
 }
 
-type depNode struct {
-	m    loadable
-	deps []*depNode
+func newGraph(m reflect.Value) *graph {
+	g := &graph{
+		root:        &node{m: m},
+		initialized: make(map[reflect.Type]reflect.Value),
+		loaded:      make(map[reflect.Type]bool),
+	}
+	return g
 }
 
-func (t *depTree) load() error {
-	if t.root == nil {
-		return nil
+func (g *graph) init() {
+	if g.root == nil {
+		return
 	}
-	t.loaded = make(map[reflect.Type]bool)
-	return t.loadNode(t.root)
+	g.initInternal(g.root)
 }
 
-func (t *depTree) loadNode(n *depNode) error {
-	// Load dependencies first.
-	for _, n := range n.deps {
-		err := t.loadNode(n)
-		if err != nil {
-			return err
-		}
+func (g *graph) initInternal(n *node) {
+	v := n.m
+	if v.Kind() == reflect.Ptr {
+		v = v.Elem()
 	}
 
-	typ := reflect.TypeOf(n.m)
-	loaded := t.loaded[typ]
-	if loaded {
-		return nil
-	}
-	err := n.m.Load()
-	if err != nil {
-		return err
-	}
-	t.loaded[typ] = true
-	return nil
-}
-
-func populate(v reflect.Value, visited map[reflect.Type]reflect.Value, dep *depNode) error {
-	if v.Kind() != reflect.Struct {
-		return errors.New("only struct can be passed to populate")
-	}
 	for i := 0; i != v.NumField(); i++ {
 		fieldValue := v.Field(i)
 		fieldType := fieldValue.Type()
@@ -98,26 +83,57 @@ func populate(v reflect.Value, visited map[reflect.Type]reflect.Value, dep *depN
 
 		switch {
 		case fieldType.Kind() == reflect.Struct:
-			populate(fieldValue, visited, dep)
+			next := &node{m: fieldValue}
+			n.deps = append(n.deps, next)
+			g.initInternal(next)
 		case fieldType.Kind() == reflect.Ptr && fieldType.Elem().Kind() == reflect.Struct:
-			fieldTypeElem := fieldType.Elem()           // From Ptr to Struct.
-			newFieldValue, ok := visited[fieldTypeElem] // Check if it's already initialized. newFieldValue will be of type Struct at this point.
+			fieldTypeElem := fieldType.Elem() // From Ptr to Struct.
+			newFieldValue, ok := g.initialized[fieldTypeElem]
 			if ok {
 				newFieldValue = newFieldValue.Addr() // From Struct to Ptr.
 			} else {
 				newFieldValue = reflect.New(fieldTypeElem)
-				visited[fieldTypeElem] = newFieldValue.Elem()
+				g.initialized[fieldTypeElem] = newFieldValue.Elem()
 			}
 			fieldValue.Set(newFieldValue)
 
-			if dep != nil && fieldType.Implements(loadableType) {
-				newDep := &depNode{m: fieldValue.Interface().(loadable)}
-				dep.deps = append(dep.deps, newDep)
-				dep = newDep
-			}
-
-			populate(newFieldValue.Elem(), visited, dep)
+			next := &node{m: fieldValue}
+			n.deps = append(n.deps, next)
+			g.initInternal(next)
 		}
 	}
+}
+
+func (g *graph) load() error {
+	if g.root == nil {
+		return nil
+	}
+	return g.loadInternal(g.root)
+}
+
+func (g *graph) loadInternal(n *node) error {
+	// Load dependencies first.
+	for _, n := range n.deps {
+		err := g.loadInternal(n)
+		if err != nil {
+			return err
+		}
+	}
+
+	m, ok := n.m.Interface().(loadable)
+	if !ok {
+		return nil
+	}
+	typ := reflect.TypeOf(m).Elem()
+	loaded := g.loaded[typ]
+	if loaded {
+		return nil
+	}
+	err := m.Load()
+	if err != nil {
+		return err
+	}
+	g.loaded[typ] = true
+
 	return nil
 }
