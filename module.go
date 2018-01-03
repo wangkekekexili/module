@@ -32,8 +32,6 @@ type loadable interface {
 	Load() error
 }
 
-var loadableType = reflect.TypeOf(new(loadable)).Elem()
-
 type node struct {
 	m    reflect.Value // Either Struct or Ptr to Struct.
 	deps []*node
@@ -43,8 +41,8 @@ type graph struct {
 	root *node
 
 	// initialized saves initialized module values.
-	// Key is the type of the module, of kind struct.
-	// Value is the initialized value of the module, of kind struct.
+	// Key is the type of the module, of kind ptr to struct.
+	// Value is the initialized value of the module, of kind ptr to struct.
 	initialized map[reflect.Type]reflect.Value
 
 	// loaded saves a set of loaded modules.
@@ -87,13 +85,10 @@ func (g *graph) initInternal(n *node) {
 			n.deps = append(n.deps, next)
 			g.initInternal(next)
 		case fieldType.Kind() == reflect.Ptr && fieldType.Elem().Kind() == reflect.Struct:
-			fieldTypeElem := fieldType.Elem() // From Ptr to Struct.
-			newFieldValue, ok := g.initialized[fieldTypeElem]
-			if ok {
-				newFieldValue = newFieldValue.Addr() // From Struct to Ptr.
-			} else {
-				newFieldValue = reflect.New(fieldTypeElem)
-				g.initialized[fieldTypeElem] = newFieldValue.Elem()
+			newFieldValue, ok := g.initialized[fieldType]
+			if !ok {
+				newFieldValue = reflect.New(fieldType.Elem())
+				g.initialized[fieldType] = newFieldValue
 			}
 			fieldValue.Set(newFieldValue)
 
