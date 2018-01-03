@@ -1,9 +1,8 @@
 package module_test
 
 import (
-	"testing"
-
 	"errors"
+	"testing"
 
 	"github.com/wangkekekexili/module"
 )

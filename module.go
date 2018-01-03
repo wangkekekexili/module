@@ -43,7 +43,7 @@ type loadable interface {
 	Load() error
 }
 
-var loadableType = reflect.TypeOf((*loadable)(nil)).Elem()
+var loadableType = reflect.TypeOf(new(loadable)).Elem()
 
 type depTree struct {
 	root   *depNode
